@@ -1,0 +1,10 @@
+{
+  "description": "Streamline customer support with a professional help desk system designed for businesses, offering ticket management, user roles, and insightful dashboards.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
