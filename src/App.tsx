@@ -1,15 +1,42 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { api } from "./services/api";
+import { useQuery } from "@tanstack/react-query";
 
 type Page = "dashboard" | "tickets" | "ticket" | "new" | "users" | "reports" | "settings";
 type Role = "ADMIN" | "TECHNICIAN" | "CUSTOMER";
 
-const tickets = [
-  { id: "#1042", title: "VPN não conecta", status: "Em andamento", priority: "Alta", owner: "João Lima", updated: "Há 8 min", sla: "1h 24m", tone: "warning" },
-  { id: "#1041", title: "Acesso ao ambiente financeiro", status: "Aberto", priority: "Média", owner: "Marina Costa", updated: "Há 26 min", sla: "3h 12m", tone: "info" },
-  { id: "#1038", title: "Erro ao exportar relatório mensal", status: "Resolvido", priority: "Baixa", owner: "Caio Mendes", updated: "Hoje, 09:18", sla: "Cumprido", tone: "success" },
-  { id: "#1036", title: "Configuração de novo colaborador", status: "Fechado", priority: "Média", owner: "João Lima", updated: "Ontem, 16:42", sla: "Cumprido", tone: "neutral" },
-  { id: "#1034", title: "Instabilidade na rede do escritório", status: "Em andamento", priority: "Crítica", owner: "Marina Costa", updated: "Ontem, 14:08", sla: "32 min", tone: "danger" },
-];
+// Mapeia o TicketResponseDTO do backend para o formato visual do frontend
+const mapTicketToFrontend = (backendTicket: any) => {
+  const statusMap: any = { OPEN: "Aberto", IN_PROGRESS: "Em andamento", RESOLVED: "Resolvido", CLOSED: "Fechado" };
+  const priorityMap: any = { LOW: "Baixa", MEDIUM: "Média", HIGH: "Alta", CRITICAL: "Crítica" };
+
+  const statusTranslated = statusMap[backendTicket.status] || "Aberto";
+
+  return {
+    id: `#${backendTicket.id}`,
+    rawId: backendTicket.id,
+    title: backendTicket.title,
+    description: backendTicket.description || "",
+    status: statusTranslated,
+    priority: priorityMap[backendTicket.priority] || "Média",
+    owner: backendTicket.technicianName || backendTicket.customerName || "Não atribuído",
+    updated: new Date(backendTicket.createdAt).toLocaleDateString(),
+    sla: "Dentro do prazo",
+    tone: statusTranslated === "Resolvido" ? "success" : statusTranslated === "Em andamento" ? "warning" : "info"
+  };
+};
+
+// Hook que consome o endpoint GET /tickets do Spring Boot
+export function useTickets() {
+  return useQuery({
+    queryKey: ["tickets"],
+    queryFn: async () => {
+      const response = await api.get("/tickets");
+      const content = response.data.content || response.data;
+      return content.map(mapTicketToFrontend);
+    },
+  });
+}
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -48,38 +75,96 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: str
 }
 
 function Login({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState("gabriel@empresa.com");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
-  const submit = () => { setLoading(true); window.setTimeout(() => { setLoading(false); onLogin(); }, 650); };
-  return <main className="login-page">
-    <section className="login-story">
-      <Mark inverse />
-      <div className="story-copy">
-        <div className="eyebrow-light"><span/> Atendimento que flui</div>
-        <h1>Clareza para resolver.<br/>Confiança para avançar.</h1>
-        <p>Organize solicitações, aproxime equipes e transforme cada atendimento em uma experiência simples.</p>
-      </div>
-      <div className="ticket-orbit" aria-hidden="true">
-        <div className="orbit-line one"/><div className="orbit-line two"/>
-        <div className="orbit-card main"><span className="orbit-icon"><Icon name="message"/></span><div><b>Solicitação recebida</b><small>Equipe de suporte · agora</small></div><span className="orbit-check"><Icon name="check" size={14}/></span></div>
-        <div className="orbit-card mini"><span className="pulse"/><div><b>Em atendimento</b><small>SLA dentro do prazo</small></div></div>
-      </div>
-      <p className="story-foot">Suporte mais humano. Operação mais inteligente.</p>
-    </section>
-    <section className="login-form-wrap">
-      <div className="mobile-brand"><Mark/></div>
-      <form className="login-form" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-        <div className="form-symbol"><span className="mark"><i/><i/><i/></span></div>
-        <h2>Bem-vindo de volta</h2>
-        <p>Entre na sua conta para continuar.</p>
-        <label>E-mail<div className="field"><input type="email" defaultValue="gabriel@empresa.com" aria-label="E-mail"/></div></label>
-        <label>Senha<div className="field"><input type={show ? "text" : "password"} defaultValue="helpdesk123" aria-label="Senha"/><button type="button" className="icon-btn" onClick={() => setShow(!show)} aria-label="Mostrar senha"><Icon name="eye"/></button></div></label>
-        <div className="login-row"><label className="check-label"><input type="checkbox" defaultChecked/><span><Icon name="check" size={12}/></span>Lembrar de mim</label><button type="button" className="link">Esqueci minha senha</button></div>
-        <button className="btn primary login-btn" disabled={loading}>{loading ? <><span className="spinner"/>Entrando...</> : "Entrar"}</button>
-        <p className="secure-note">Acesso seguro e protegido para sua equipe.</p>
-      </form>
-    </section>
-  </main>;
+  const [error, setError] = useState("");
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await api.post("/auth/login", { email, password });
+      const { token } = response.data;
+      localStorage.setItem("@HelpDesk:token", token);
+      onLogin();
+    } catch (err: any) {
+      setError(err.message || "E-mail ou palavra-passe incorretos.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+      <main className="login-page">
+        <section className="login-story">
+          <Mark inverse />
+          <div className="story-copy">
+            <div className="eyebrow-light"><span/> Atendimento que flui</div>
+            <h1>Clareza para resolver.<br/>Confiança para avançar.</h1>
+            <p>Organize solicitações, aproxime equipes e transforme cada atendimento em uma experiência simples.</p>
+          </div>
+          <div className="ticket-orbit" aria-hidden="true">
+            <div className="orbit-line one"/><div className="orbit-line two"/>
+            <div className="orbit-card main"><span className="orbit-icon"><Icon name="message"/></span><div><b>Solicitação recebida</b><small>Equipe de suporte · agora</small></div><span className="orbit-check"><Icon name="check" size={14}/></span></div>
+            <div className="orbit-card mini"><span className="pulse"/><div><b>Em atendimento</b><small>SLA dentro do prazo</small></div></div>
+          </div>
+          <p className="story-foot">Suporte mais humano. Operação mais inteligente.</p>
+        </section>
+        <section className="login-form-wrap">
+          <div className="mobile-brand"><Mark/></div>
+          <form className="login-form" onSubmit={submit}>
+            <div className="form-symbol"><span className="mark"><i/><i/><i/></span></div>
+            <h2>Bem-vindo de volta</h2>
+            <p>Entre na sua conta para continuar.</p>
+
+            <label>
+              E-mail
+              <div className="field">
+                <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    aria-label="E-mail"
+                />
+              </div>
+            </label>
+
+            <label>
+              Senha
+              <div className="field">
+                <input
+                    type={show ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    aria-label="Senha"
+                />
+                <button type="button" className="icon-btn" onClick={() => setShow(!show)} aria-label="Mostrar senha">
+                  <Icon name="eye"/>
+                </button>
+              </div>
+            </label>
+
+            <div className="login-row">
+              <label className="check-label"><input type="checkbox" defaultChecked/><span><Icon name="check" size={12}/></span>Lembrar de mim</label>
+              <button type="button" className="link">Esqueci minha senha</button>
+            </div>
+
+            {error && <div style={{ color: '#dc2626', fontSize: '0.875rem', marginBottom: '1rem', fontWeight: 500 }}>{error}</div>}
+
+            <button type="submit" className="btn primary login-btn" disabled={loading}>
+              {loading ? <><span className="spinner"/>Entrando...</> : "Entrar"}
+            </button>
+            <p className="secure-note">Acesso seguro e protegido para sua equipe.</p>
+          </form>
+        </section>
+      </main>
+  );
 }
 
 function Sidebar({ page, setPage, open, close, collapsed, setCollapsed, logout }: { page: Page; setPage: (p: Page) => void; open: boolean; close: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void; logout: () => void }) {
@@ -111,27 +196,35 @@ function Metric({ label, value, note, tone, icon }: { label: string; value: stri
   return <article className="metric"><div className={`metric-icon ${tone}`}><Icon name={icon}/></div><div className="metric-label">{label}<button aria-label="Mais informações">···</button></div><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function Dashboard({ go, role, setRole }: { go: (p: Page) => void; role: Role; setRole: (r: Role) => void }) {
-  const stats = role === "CUSTOMER"
-    ? [["Meus chamados","12","2 novos este mês","info","ticket"],["Abertos","3","Aguardando atendimento","warning","clock"],["Em andamento","2","Com a equipe técnica","primary","message"],["Resolvidos","7","58% do total","success","check"]]
-    : role === "TECHNICIAN"
-    ? [["Atribuídos a mim","18","4 novos hoje","info","ticket"],["Pendentes","6","Precisam de resposta","warning","clock"],["Em andamento","8","Dentro do esperado","primary","message"],["SLA em risco","2","Requer atenção","danger","bell"]]
-    : [["Total de chamados","248","+12% no período","info","ticket"],["Abertos","24","9,7% do total","warning","clock"],["Em andamento","18","7 atribuídos hoje","primary","message"],["Resolvidos","206","83% de resolução","success","check"],["SLA em risco","3","1,2% do total","danger","bell"]];
+function Dashboard({ go, role, setRole, onSelectTicket }: { go: (p: Page) => void; role: Role; setRole: (r: Role) => void; onSelectTicket: (t: any) => void }) {
+  const { data: ticketsData = [], isLoading, isError } = useTickets();
+
+  const total = ticketsData.length;
+  const abertos = ticketsData.filter((t: any) => t.status === "Aberto").length;
+  const emAndamento = ticketsData.filter((t: any) => t.status === "Em andamento").length;
+  const resolvidos = ticketsData.filter((t: any) => t.status === "Resolvido").length;
+
+  const stats = [
+    ["Total de chamados", total.toString(), "Registrados na base", "info", "ticket"],
+    ["Abertos", abertos.toString(), "Aguardando atendimento", "warning", "clock"],
+    ["Em andamento", emAndamento.toString(), "Em atendimento", "primary", "message"],
+    ["Resolvidos", resolvidos.toString(), "Concluídos", "success", "check"]
+  ];
+
   return <div className="page">
-    <div className="page-heading dashboard-heading"><div><span className="eyebrow">VISÃO GERAL</span><h1>Bom dia, Gabriel</h1><p>Aqui está um resumo dos seus atendimentos.</p></div><div className="heading-actions"><select value={role} onChange={(e) => setRole(e.target.value as Role)} aria-label="Visualizar perfil"><option value="ADMIN">Visão de Admin</option><option value="TECHNICIAN">Visão de Técnico</option><option value="CUSTOMER">Visão de Cliente</option></select><button className="btn primary" onClick={() => go("new")}><Icon name="plus"/>Novo chamado</button></div></div>
-    <section className={`metrics ${stats.length === 5 ? "five" : ""}`}>{stats.map((s) => <Metric key={s[0]} label={s[0]} value={s[1]} note={s[2]} tone={s[3]} icon={s[4]}/>)}</section>
+    <div className="page-heading dashboard-heading"><div><span className="eyebrow">VISÃO GERAL</span><h1>Painel de Atendimento</h1><p>Resumo em tempo real da base de dados.</p></div><div className="heading-actions"><button className="btn primary" onClick={() => go("new")}><Icon name="plus"/>Novo chamado</button></div></div>
+    <section className="metrics">{stats.map((s) => <Metric key={s[0]} label={s[0]} value={s[1]} note={s[2]} tone={s[3]} icon={s[4]}/>)}</section>
     <div className="dashboard-grid">
-      <section className="panel recent"><div className="panel-title"><div><h2>Chamados recentes</h2><p>Últimas atualizações da sua equipe</p></div><button className="link" onClick={() => go("tickets")}>Ver todos <Icon name="chevron" size={14}/></button></div><TicketTable rows={tickets.slice(0,4)} onOpen={() => go("ticket")} compact/></section>
-      <aside className="panel activity"><div className="panel-title"><div><h2>Atividade recente</h2><p>Hoje, 18 de junho</p></div><button className="icon-btn"><Icon name="dots"/></button></div>
+      <section className="panel recent">
+        <div className="panel-title"><div><h2>Chamados recentes</h2><p>Últimas solicitações registradas</p></div><button className="link" onClick={() => go("tickets")}>Ver todos <Icon name="chevron" size={14}/></button></div>
+        {isLoading ? <p style={{padding: '2rem', textAlign: 'center'}}>Carregando...</p> : isError ? <p style={{padding: '2rem', color: 'red'}}>Erro ao carregar dados.</p> : ticketsData.length === 0 ? <p style={{padding: '2rem', textAlign: 'center'}}>Nenhum chamado encontrado.</p> : <TicketTable rows={ticketsData.slice(0,5)} onOpen={(t) => { onSelectTicket(t); go("ticket"); }} compact/>}
+      </section>
+      <aside className="panel activity"><div className="panel-title"><div><h2>Status da API</h2><p>Conexão ativa</p></div></div>
         <div className="activity-list">
-          <Activity initials="JL" color="blue" text={<><b>João</b> atualizou o status de <strong>#1042</strong></>} time="Há 8 min"/>
-          <Activity initials="MC" color="mint" text={<><b>Marina</b> respondeu ao chamado <strong>#1041</strong></>} time="Há 26 min"/>
-          <Activity initials="CM" color="amber" text={<><b>Caio</b> resolveu o chamado <strong>#1038</strong></>} time="Há 1h"/>
-          <Activity initials="GS" color="violet" text={<><b>Você</b> atribuiu o chamado <strong>#1036</strong></>} time="Há 2h"/>
+          <Activity initials="DB" color="mint" text={<>Integração com <b>PostgreSQL</b> operando normalmente.</>} time="Ativo"/>
         </div>
       </aside>
     </div>
-    <section className="sla-strip"><div><span className="sla-icon"><Icon name="clock"/></span><div><h3>Desempenho de SLA</h3><p>96,8% dos chamados dentro do prazo neste mês</p></div></div><div className="sla-progress"><span><i style={{width:"96.8%"}}/></span><b>96,8%</b></div><button className="btn ghost">Ver relatório</button></section>
   </div>;
 }
 
@@ -139,90 +232,334 @@ function Activity({ initials, color, text, time }: { initials: string; color: st
   return <div className="activity-item"><span className={`avatar ${color}`}>{initials}</span><div><p>{text}</p><small>{time}</small></div></div>;
 }
 
-function TicketTable({ rows, onOpen, compact = false }: { rows: typeof tickets; onOpen: () => void; compact?: boolean }) {
-  return <div className={`table-wrap ${compact ? "compact" : ""}`}><table><thead><tr><th>Chamado</th><th>Status</th>{!compact && <th>Prioridade</th>}<th>Responsável</th><th>Atualizado</th><th>SLA</th><th/></tr></thead><tbody>{rows.map((t) => <tr key={t.id} onClick={onOpen}><td><small>{t.id}</small><b>{t.title}</b></td><td><Badge tone={statusTone(t.status)}>{t.status}</Badge></td>{!compact && <td><Badge tone={priorityTone(t.priority)}>{t.priority}</Badge></td>}<td><span className="owner-avatar">{t.owner.split(" ").map(w=>w[0]).join("")}</span>{t.owner}</td><td>{t.updated}</td><td><span className={`sla-text ${t.tone}`}><Icon name="clock" size={14}/>{t.sla}</span></td><td><button className="icon-btn"><Icon name="dots"/></button></td></tr>)}</tbody></table></div>;
+function TicketTable({ rows, onOpen, compact = false }: { rows: any[]; onOpen: (t: any) => void; compact?: boolean }) {
+  return <div className={`table-wrap ${compact ? "compact" : ""}`}><table><thead><tr><th>Chamado</th><th>Status</th>{!compact && <th>Prioridade</th>}<th>Responsável</th><th>Atualizado</th><th>SLA</th><th/></tr></thead><tbody>{rows.map((t) => <tr key={t.id} onClick={() => onOpen(t)} style={{ cursor: "pointer" }}><td><small>{t.id}</small><b>{t.title}</b></td><td><Badge tone={statusTone(t.status)}>{t.status}</Badge></td>{!compact && <td><Badge tone={priorityTone(t.priority)}>{t.priority}</Badge></td>}<td><span className="owner-avatar">{t.owner.split(" ").map((w:string)=>w[0]).join("")}</span>{t.owner}</td><td>{t.updated}</td><td><span className={`sla-text ${t.tone}`}><Icon name="clock" size={14}/>{t.sla}</span></td><td><button className="icon-btn"><Icon name="dots"/></button></td></tr>)}</tbody></table></div>;
 }
 
-function Tickets({ go }: { go: (p: Page) => void }) {
+function Tickets({ go, onSelectTicket }: { go: (p: Page) => void; onSelectTicket: (t: any) => void }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const filtered = useMemo(() => tickets.filter(t => `${t.id} ${t.title}`.toLowerCase().includes(query.toLowerCase())), [query]);
+
+  const { data: ticketsData = [], isLoading, isError } = useTickets();
+  const filtered = useMemo(() => ticketsData.filter((t: any) => `${t.id} ${t.title}`.toLowerCase().includes(query.toLowerCase())), [query, ticketsData]);
+
   return <div className="page">
     <div className="page-heading"><div><span className="eyebrow">ATENDIMENTO</span><h1>Chamados</h1><p>Acompanhe e gerencie todas as solicitações.</p></div><button className="btn primary" onClick={() => go("new")}><Icon name="plus"/>Novo chamado</button></div>
     <section className="panel tickets-panel">
       <div className="toolbar"><label className="search-field"><Icon name="search"/><input placeholder="Buscar chamados..." value={query} onChange={e=>setQuery(e.target.value)}/></label><div className="filter-actions"><button className="btn outline" onClick={() => setFilterOpen(!filterOpen)}><Icon name="filter"/>Filtros <span className="filter-count">2</span></button><select><option>Mais recentes</option><option>Mais antigos</option></select></div></div>
       {filterOpen && <div className="filters"><label>Status<select><option>Todos os status</option><option>Aberto</option></select></label><label>Prioridade<select><option>Todas</option><option>Alta</option></select></label><label>Responsável<select><option>Toda a equipe</option></select></label><label>Período<select><option>Últimos 30 dias</option></select></label><button className="link">Limpar filtros</button></div>}
-      <TicketTable rows={filtered} onOpen={() => go("ticket")}/>
-      <div className="pagination"><p>Mostrando <b>1–{filtered.length}</b> de <b>248</b> chamados</p><div><button disabled><Icon name="arrow" size={15}/></button><button className="active">1</button><button>2</button><button>3</button><span>…</span><button>25</button><button><Icon name="chevron" size={15}/></button></div></div>
+
+      {isLoading && <div style={{padding: '3rem', textAlign: 'center'}}>A carregar chamados reais...</div>}
+      {isError && <div style={{padding: '3rem', textAlign: 'center', color: 'red'}}>Erro ao comunicar com a API de chamados.</div>}
+      {!isLoading && !isError && filtered.length === 0 && <div style={{padding: '3rem', textAlign: 'center'}}>Nenhum chamado encontrado na base de dados.</div>}
+      {!isLoading && !isError && filtered.length > 0 && <TicketTable rows={filtered} onOpen={(t) => { onSelectTicket(t); go("ticket"); }}/>}
+
+      <div className="pagination"><p>Total de chamados listados: <b>{filtered.length}</b></p></div>
     </section>
   </div>;
 }
 
-function TicketDetail({ go }: { go: (p: Page) => void }) {
+function TicketDetail({ ticket, go }: { ticket: any; go: (p: Page) => void }) {
+  const [comment, setComment] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!ticket) {
+    return <div className="page"><button className="back-link" onClick={() => go("tickets")}><Icon name="arrow"/>Voltar para chamados</button><p style={{ padding: '2rem' }}>Selecione um chamado na lista.</p></div>;
+  }
+
+  const rawId = ticket.rawId || ticket.id.toString().replace(/\D/g, "");
+
+  const { data: comments = [], refetch } = useQuery({
+    queryKey: ["comments", rawId],
+    queryFn: async () => {
+      const response = await api.get(`/tickets/${rawId}/comments`);
+      return response.data;
+    },
+    enabled: !!rawId
+  });
+
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!comment.trim()) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      await api.post(`/tickets/${rawId}/comments`, { content: comment });
+      setComment("");
+      refetch();
+    } catch (err: any) {
+      setError(err.message || "Erro ao adicionar comentário.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para alterar o status do chamado via PATCH /api/v1/tickets/{id}/status
+  const handleStatusChange = async (newStatusEnum: string) => {
+    setUpdatingStatus(true);
+    try {
+      await api.patch(`/tickets/${rawId}/status`, { status: newStatusEnum });
+
+      // Atualiza o objeto do ticket localmente para feedback imediato na tela
+      const statusMap: Record<string, string> = { OPEN: "Aberto", IN_PROGRESS: "Em andamento", RESOLVED: "Resolvido", CLOSED: "Fechado" };
+      ticket.status = statusMap[newStatusEnum] || "Aberto";
+    } catch (err: any) {
+      alert(err.message || "Erro ao atualizar o status do chamado.");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
   return <div className="page detail-page">
     <button className="back-link" onClick={() => go("tickets")}><Icon name="arrow"/>Voltar para chamados</button>
-    <div className="detail-heading"><div><div className="ticket-kicker"><span>#1042</span><Badge tone="warning">Em andamento</Badge></div><h1>VPN não conecta</h1><p>Criado hoje, às 09:42 por Gabriel Silva</p></div><div><button className="btn outline">Mais ações <Icon name="down" size={15}/></button><button className="btn primary"><Icon name="check"/>Resolver chamado</button></div></div>
+    <div className="detail-heading">
+      <div>
+        <div className="ticket-kicker"><span>{ticket.id}</span><Badge tone={statusTone(ticket.status)}>{ticket.status}</Badge></div>
+        <h1>{ticket.title}</h1>
+        <p>Atualizado em {ticket.updated}</p>
+      </div>
+
+      {/* Ações de mudança de status */}
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        {ticket.status !== "Resolvido" && (
+            <button
+                className="btn primary"
+                onClick={() => handleStatusChange("RESOLVED")}
+                disabled={updatingStatus}
+            >
+              <Icon name="check"/>
+              {updatingStatus ? "Atualizando..." : "Resolver chamado"}
+            </button>
+        )}
+
+        {ticket.status === "Aberto" && (
+            <button
+                className="btn outline"
+                onClick={() => handleStatusChange("IN_PROGRESS")}
+                disabled={updatingStatus}
+            >
+              Em andamento
+            </button>
+        )}
+      </div>
+    </div>
+
     <div className="detail-layout">
       <main className="detail-main">
-        <section className="panel detail-section"><h2>Descrição</h2><p>Não consigo me conectar à VPN da empresa desde a atualização de ontem. O cliente apresenta a mensagem “Falha ao estabelecer conexão segura”. Já reiniciei o computador e refiz as credenciais, mas o erro continua.</p><div className="attachment"><span><Icon name="ticket"/></span><div><b>captura-erro-vpn.png</b><small>PNG · 428 KB</small></div><button className="link">Baixar</button></div></section>
-        <section className="panel detail-section"><div className="panel-title"><div><h2>Atividade</h2><p>Histórico deste chamado</p></div><div className="segmented"><button className="active">Todos</button><button>Comentários</button></div></div>
-          <div className="timeline">
-            <Timeline icon="message" title="Comentário adicionado" meta="10:15 · João Lima"><p>Estou analisando os logs de autenticação. Pode confirmar se o erro também ocorre fora da rede do escritório?</p></Timeline>
-            <Timeline icon="clock" title="Status alterado" meta="10:02 · João Lima"><span>Aberto</span><Icon name="chevron" size={14}/><Badge tone="warning">Em andamento</Badge></Timeline>
-            <Timeline icon="users" title="Técnico atribuído" meta="09:48 · Marina Costa"><p>João Lima assumiu este chamado.</p></Timeline>
-            <Timeline icon="ticket" title="Chamado criado" meta="09:42 · Gabriel Silva"/>
+        <section className="panel detail-section">
+          <h2>Detalhes da Solicitação</h2>
+          <p>{ticket.description || "Nenhuma descrição detalhada fornecida para este chamado."}</p>
+        </section>
+
+        <section className="panel detail-section">
+          <div className="panel-title"><h2>Comentários</h2></div>
+          <div className="timeline" style={{ marginBottom: '1.5rem' }}>
+            {comments.length === 0 ? <p style={{ color: '#666', fontSize: '0.9rem' }}>Nenhum comentário até o momento.</p> :
+                comments.map((c: any) => (
+                    <div key={c.id} className="timeline-item" style={{ marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid #eee' }}>
+                      <b>{c.userName || c.userEmail || "Usuário"}:</b>
+                      <p style={{ margin: '0.25rem 0' }}>{c.text || c.content}</p>
+                      <small style={{ color: '#888' }}>{c.createdAt ? new Date(c.createdAt).toLocaleString() : "Agora"}</small>
+                    </div>
+                ))
+            }
           </div>
-          <div className="comment-box"><span className="avatar">GS</span><div><textarea placeholder="Escreva um comentário..."/><div><small>Somente pessoas deste chamado verão.</small><button className="btn primary">Comentar</button></div></div></div>
+
+          <form onSubmit={handleAddComment} className="comment-box">
+            <div style={{ width: '100%' }}>
+              <textarea
+                  placeholder="Escreva um comentário ou atualização..."
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  required
+              />
+              {error && <p style={{ color: 'red', fontSize: '0.85rem', marginTop: '0.5rem' }}>{error}</p>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button type="submit" className="btn primary" disabled={loading}>
+                  {loading ? "Enviando..." : "Comentar"}
+                </button>
+              </div>
+            </div>
+          </form>
         </section>
       </main>
-      <aside className="panel detail-aside"><h2>Detalhes</h2><DetailRow label="Status"><Badge tone="warning">Em andamento</Badge></DetailRow><DetailRow label="Prioridade"><Badge tone="warning">Alta</Badge></DetailRow><DetailRow label="SLA"><span className="sla-text warning"><Icon name="clock" size={14}/>1h 24m restantes</span></DetailRow><hr/><DetailRow label="Responsável"><span className="person"><span className="owner-avatar">JL</span>João Lima</span></DetailRow><DetailRow label="Cliente"><span className="person"><span className="owner-avatar purple">GS</span>Gabriel Silva</span></DetailRow><DetailRow label="Categoria">Acesso e segurança</DetailRow><DetailRow label="Canal">Portal</DetailRow><hr/><div className="sla-card"><div><b>Prazo de resolução</b><span>75% decorrido</span></div><div className="bar"><i/></div><small>Hoje, 13:42</small></div></aside>
+
+      <aside className="panel detail-aside">
+        <h2>Informações</h2>
+        <DetailRow label="Status">
+          <select
+              value={
+                ticket.status === "Aberto" ? "OPEN" :
+                    ticket.status === "Em andamento" ? "IN_PROGRESS" :
+                        ticket.status === "Resolvido" ? "RESOLVED" : "CLOSED"
+              }
+              onChange={(e) => handleStatusChange(e.target.value)}
+              disabled={updatingStatus}
+              style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #ccc' }}
+          >
+            <option value="OPEN">Aberto</option>
+            <option value="IN_PROGRESS">Em andamento</option>
+            <option value="RESOLVED">Resolvido</option>
+            <option value="CLOSED">Fechado</option>
+          </select>
+        </DetailRow>
+        <DetailRow label="Prioridade"><Badge tone={priorityTone(ticket.priority)}>{ticket.priority}</Badge></DetailRow>
+        <DetailRow label="Responsável">{ticket.owner}</DetailRow>
+      </aside>
     </div>
   </div>;
 }
 
-function Timeline({ icon, title, meta, children }: { icon: string; title: string; meta: string; children?: ReactNode }) {
-  return <div className="timeline-item"><span className="timeline-icon"><Icon name={icon}/></span><div><div className="timeline-head"><b>{title}</b><small>{meta}</small></div>{children && <div className="timeline-content">{children}</div>}</div></div>;
-}
 function DetailRow({ label, children }: { label: string; children: ReactNode }) { return <div className="detail-row"><span>{label}</span><div>{children}</div></div>; }
 
 function NewTicket({ go }: { go: (p: Page) => void }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState("MEDIUM");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const priorityMap: Record<string, string> = {
+      "Baixa": "LOW",
+      "Média": "MEDIUM",
+      "Alta": "HIGH",
+      "Crítica": "CRITICAL"
+    };
+
+    try {
+      await api.post("/tickets", {
+        title,
+        description,
+        priority: priorityMap[priority] || "MEDIUM"
+      });
+
+      setSent(true);
+    } catch (err: any) {
+      setError(err.message || "Erro ao criar o chamado.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return <div className="page form-page">
     <button className="back-link" onClick={() => go("tickets")}><Icon name="arrow"/>Voltar para chamados</button>
     <div className="page-heading"><div><span className="eyebrow">NOVA SOLICITAÇÃO</span><h1>Abrir novo chamado</h1><p>Conte o que aconteceu. Nossa equipe cuidará do restante.</p></div></div>
-    {sent ? <section className="panel success-state"><span><Icon name="check" size={28}/></span><h2>Chamado enviado com sucesso</h2><p>Recebemos sua solicitação e avisaremos quando houver novidades.</p><button className="btn primary" onClick={() => go("ticket")}>Ver chamado #1043</button></section> :
-    <form className="panel ticket-form" onSubmit={e=>{e.preventDefault();setSent(true);}}>
-      <div className="form-section"><div className="section-number">1</div><div className="section-fields"><h2>Sobre o chamado</h2><p>Use um título curto e escolha a categoria mais próxima.</p><label>Título<span>*</span><input required placeholder="Ex.: Não consigo acessar minha conta"/></label><div className="form-grid"><label>Categoria<span>*</span><select required defaultValue=""><option value="" disabled>Selecione uma categoria</option><option>Acesso e segurança</option><option>Equipamentos</option></select></label><label>Prioridade<span>*</span><select defaultValue="Média"><option>Baixa</option><option>Média</option><option>Alta</option><option>Crítica</option></select></label></div></div></div>
-      <div className="form-divider"/>
-      <div className="form-section"><div className="section-number">2</div><div className="section-fields"><h2>O que aconteceu?</h2><p>Inclua detalhes que ajudem nossa equipe a entender o problema.</p><label>Descrição<span>*</span><textarea required placeholder="Descreva o problema, quando começou e o que você já tentou..."/></label><label className="upload"><Icon name="ticket"/><b>Arraste um arquivo ou <span>selecione</span></b><small>PNG, JPG ou PDF · máximo de 10 MB</small><input type="file"/></label></div></div>
-      <div className="form-actions"><button type="button" className="btn ghost" onClick={()=>go("tickets")}>Cancelar</button><button className="btn primary">Enviar chamado</button></div>
-    </form>}
+    {sent ? <section className="panel success-state"><span><Icon name="check" size={28}/></span><h2>Chamado enviado com sucesso</h2><p>Recebemos sua solicitação e ela já foi registrada na base de dados.</p><button className="btn primary" onClick={() => go("tickets")}>Ver meus chamados</button></section> :
+        <form className="panel ticket-form" onSubmit={handleSubmit}>
+          <div className="form-section">
+            <div className="section-number">1</div>
+            <div className="section-fields">
+              <h2>Sobre o chamado</h2>
+              <p>Use um título curto e escolha a prioridade.</p>
+
+              <label>Título<span>*</span>
+                <input
+                    required
+                    placeholder="Ex.: Não consigo acessar minha conta"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                />
+              </label>
+
+              <div className="form-grid">
+                <label>Prioridade<span>*</span>
+                  <select
+                      value={priority}
+                      onChange={(e) => setPriority(e.target.value)}
+                  >
+                    <option value="Baixa">Baixa</option>
+                    <option value="Média">Média</option>
+                    <option value="Alta">Alta</option>
+                    <option value="Crítica">Crítica</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="form-divider"/>
+
+          <div className="form-section">
+            <div className="section-number">2</div>
+            <div className="section-fields">
+              <h2>O que aconteceu?</h2>
+              <p>Inclua detalhes que ajudem nossa equipe a entender o problema.</p>
+
+              <label>Descrição<span>*</span>
+                <textarea
+                    required
+                    placeholder="Descreva o problema, quando começou e o que você já tentou..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                />
+              </label>
+            </div>
+          </div>
+
+          {error && <div style={{ color: '#dc2626', fontSize: '0.875rem', marginBottom: '1rem', fontWeight: 500 }}>{error}</div>}
+
+          <div className="form-actions">
+            <button type="button" className="btn ghost" onClick={()=>go("tickets")}>Cancelar</button>
+            <button type="submit" className="btn primary" disabled={loading}>
+              {loading ? <><span className="spinner"/>Enviando...</> : "Enviar chamado"}
+            </button>
+          </div>
+        </form>}
   </div>;
 }
 
 function Users() {
-  const users = [["Marina Costa","marina@empresa.com","ADMIN","Ativo","12 mar 2024"],["João Lima","joao@empresa.com","TECHNICIAN","Ativo","04 abr 2024"],["Caio Mendes","caio@empresa.com","TECHNICIAN","Ativo","18 abr 2024"],["Gabriel Silva","gabriel@empresa.com","CUSTOMER","Ativo","02 mai 2024"],["Ana Souza","ana@empresa.com","CUSTOMER","Inativo","16 mai 2024"]];
-  return <div className="page"><div className="page-heading"><div><span className="eyebrow">ADMINISTRAÇÃO</span><h1>Usuários</h1><p>Gerencie pessoas, acessos e funções da organização.</p></div><button className="btn primary"><Icon name="plus"/>Convidar usuário</button></div><section className="panel tickets-panel"><div className="toolbar"><label className="search-field"><Icon name="search"/><input placeholder="Buscar por nome ou e-mail..."/></label><div className="filter-actions"><button className="btn outline"><Icon name="filter"/>Função</button><button className="btn outline">Status <Icon name="down" size={14}/></button></div></div><div className="table-wrap"><table><thead><tr><th>Usuário</th><th>Função</th><th>Status</th><th>Data de criação</th><th/></tr></thead><tbody>{users.map((u,i)=><tr key={u[1]}><td><span className={`owner-avatar c${i}`}>{u[0].split(" ").map(w=>w[0]).join("")}</span><span className="user-cell"><b>{u[0]}</b><small>{u[1]}</small></span></td><td><span className="role-badge">{u[2]}</span></td><td><Badge tone={u[3]==="Ativo"?"success":"neutral"}>{u[3]}</Badge></td><td>{u[4]}</td><td><button className="icon-btn"><Icon name="dots"/></button></td></tr>)}</tbody></table></div><div className="pagination"><p>5 usuários na organização</p></div></section></div>;
+  const users = [["Marina Costa","marina@empresa.com","ADMIN","Ativo","12 mar 2024"],["João Lima","joao@empresa.com","TECHNICIAN","Ativo","04 abr 2024"],["Caio Mendes","caio@empresa.com","TECHNICIAN","Ativo","18 abr 2024"],["Gabriel Silva","gabriel@empresa.com","CUSTOMER","Ativo","02 mai 2024"]];
+  return <div className="page"><div className="page-heading"><div><span className="eyebrow">ADMINISTRAÇÃO</span><h1>Usuários</h1><p>Gerencie pessoas, acessos e funções da organização.</p></div><button className="btn primary"><Icon name="plus"/>Convidar usuário</button></div><section className="panel tickets-panel"><div className="table-wrap"><table><thead><tr><th>Usuário</th><th>Função</th><th>Status</th><th>Data</th><th/></tr></thead><tbody>{users.map((u,i)=><tr key={u[1]}><td><span className={`owner-avatar c${i}`}>{u[0].split(" ").map(w=>w[0]).join("")}</span><span className="user-cell"><b>{u[0]}</b><small>{u[1]}</small></span></td><td><span className="role-badge">{u[2]}</span></td><td><Badge tone="success">{u[3]}</Badge></td><td>{u[4]}</td><td><button className="icon-btn"><Icon name="dots"/></button></td></tr>)}</tbody></table></div></section></div>;
 }
 
 function Settings() {
   const [tab,setTab]=useState("Perfil");
-  return <div className="page"><div className="page-heading"><div><span className="eyebrow">PREFERÊNCIAS</span><h1>Configurações</h1><p>Gerencie seu perfil e as preferências da conta.</p></div></div><div className="settings-layout"><nav className="settings-nav">{["Perfil","Conta","Preferências","Notificações"].map(x=><button className={tab===x?"active":""} onClick={()=>setTab(x)} key={x}>{x}</button>)}</nav><section className="panel settings-panel"><div className="settings-title"><h2>{tab}</h2><p>{tab==="Perfil"?"Atualize suas informações pessoais e sua foto.":"Configure como o HelpDesk funciona para você."}</p></div>{tab==="Perfil"?<><div className="photo-row"><span className="avatar large">GS</span><div><button className="btn outline">Alterar foto</button><button className="btn ghost danger-text">Remover</button><small>JPG ou PNG. Máximo de 2 MB.</small></div></div><div className="settings-fields"><div className="form-grid"><label>Nome<input defaultValue="Gabriel"/></label><label>Sobrenome<input defaultValue="Silva"/></label></div><label>E-mail<input defaultValue="gabriel@empresa.com"/></label><label>Cargo<input defaultValue="Administrador de TI"/></label></div></>:<div className="preference-list"><Toggle title="Atualizações de chamados" text="Receba um aviso quando um chamado for atualizado."/><Toggle title="Resumo semanal" text="Um relatório compacto toda segunda-feira."/><Toggle title="Sons da interface" text="Reproduzir sons sutis para novas notificações." off/></div>}<div className="settings-save"><button className="btn primary">Salvar alterações</button></div></section></div></div>;
+  return <div className="page"><div className="page-heading"><div><span className="eyebrow">PREFERÊNCIAS</span><h1>Configurações</h1><p>Gerencie seu perfil e as preferências da conta.</p></div></div><div className="settings-layout"><nav className="settings-nav">{["Perfil","Conta","Preferências","Notificações"].map(x=><button className={tab===x?"active":""} onClick={()=>setTab(x)} key={x}>{x}</button>)}</nav><section className="panel settings-panel"><div className="settings-title"><h2>{tab}</h2><p>Configure como o HelpDesk funciona para si.</p></div>{tab==="Perfil"?<div className="settings-fields"><label>Nome<input defaultValue="Gabriel Silva"/></label><label>E-mail<input defaultValue="gabriel@empresa.com"/></label></div>:<div className="preference-list"><Toggle title="Atualizações de chamados" text="Receba um aviso quando um chamado for atualizado."/></div>}<div className="settings-save"><button className="btn primary">Salvar alterações</button></div></section></div></div>;
 }
-function Toggle({title,text,off=false}:{title:string;text:string;off?:boolean}){const [on,setOn]=useState(!off);return <div className="toggle-row"><div><b>{title}</b><p>{text}</p></div><button className={`switch ${on?"on":""}`} onClick={()=>setOn(!on)} aria-label={title}><i/></button></div>}
+function Toggle({title,text}:{title:string;text:string}){const [on,setOn]=useState(true);return <div className="toggle-row"><div><b>{title}</b><p>{text}</p></div><button className={`switch ${on?"on":""}`} onClick={()=>setOn(!on)} aria-label={title}><i/></button></div>}
 
-function Reports() { return <div className="page"><div className="page-heading"><div><span className="eyebrow">ANÁLISE</span><h1>Relatórios</h1><p>Entenda o desempenho da operação sem perder o foco.</p></div><button className="btn outline">Últimos 30 dias <Icon name="down" size={15}/></button></div><div className="report-grid"><section className="panel report-main"><div className="panel-title"><div><h2>Chamados por período</h2><p>Volume de solicitações recebidas e resolvidas</p></div><div className="legend"><span className="received">Recebidos</span><span className="resolved">Resolvidos</span></div></div><div className="chart"><div className="chart-lines"><i/><i/><i/><i/></div>{[55,70,48,82,65,76,58].map((h,i)=><div className="bar-group" key={i}><div><i style={{height:`${h}%`}}/><i style={{height:`${h-10}%`}}/></div><span>{["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][i]}</span></div>)}</div></section><section className="panel report-side"><h2>Qualidade do atendimento</h2><div className="score-ring"><div><b>94</b><span>/100</span></div></div><p>Excelente desempenho</p><small>+4 pontos comparado ao período anterior</small></section></div></div> }
+function Reports() { return <div className="page"><div className="page-heading"><div><span className="eyebrow">ANÁLISE</span><h1>Relatórios</h1><p>Desempenho da operação.</p></div></div><div className="report-grid"><section className="panel report-main"><div className="panel-title"><h2>Métricas gerais</h2></div><p>Sem dados suficientes no momento.</p></section></div></div>; }
 
 function AppShell({ logout }: { logout: () => void }) {
   const [page,setPage]=useState<Page>("dashboard");
   const [role,setRole]=useState<Role>("ADMIN");
   const [drawer,setDrawer]=useState(false);
   const [collapsed,setCollapsed]=useState(false);
-  const titles:Record<Page,string>={dashboard:"Dashboard",tickets:"Chamados",ticket:"Chamado #1042",new:"Novo chamado",users:"Usuários",reports:"Relatórios",settings:"Configurações"};
-  return <div className={`app-shell ${collapsed?"side-collapsed":""}`}><Sidebar page={page} setPage={setPage} open={drawer} close={()=>setDrawer(false)} collapsed={collapsed} setCollapsed={setCollapsed} logout={logout}/><div className="main-area"><Header title={titles[page]} openMenu={()=>setDrawer(true)}/>{page==="dashboard"&&<Dashboard go={setPage} role={role} setRole={setRole}/>} {page==="tickets"&&<Tickets go={setPage}/>} {page==="ticket"&&<TicketDetail go={setPage}/>} {page==="new"&&<NewTicket go={setPage}/>} {page==="users"&&<Users/>} {page==="settings"&&<Settings/>} {page==="reports"&&<Reports/>}</div></div>;
+  const [selectedTicket, setSelectedTicket] = useState<any>(null);
+
+  const titles:Record<Page,string>={dashboard:"Dashboard",tickets:"Chamados",ticket:"Detalhes",new:"Novo chamado",users:"Usuários",reports:"Relatórios",settings:"Configurações"};
+
+  return <div className={`app-shell ${collapsed?"side-collapsed":""}`}><Sidebar page={page} setPage={setPage} open={drawer} close={()=>setDrawer(false)} collapsed={collapsed} setCollapsed={setCollapsed} logout={logout}/><div className="main-area"><Header title={titles[page]} openMenu={()=>setDrawer(true)}/>
+    {page==="dashboard"&&<Dashboard go={setPage} role={role} setRole={setRole} onSelectTicket={setSelectedTicket}/>}
+    {page==="tickets"&&<Tickets go={setPage} onSelectTicket={setSelectedTicket}/>}
+    {page==="ticket"&&<TicketDetail ticket={selectedTicket} go={setPage}/>}
+    {page==="new"&&<NewTicket go={setPage}/>}
+    {page==="users"&&<Users/>}
+    {page==="settings"&&<Settings/>}
+    {page==="reports"&&<Reports/>}
+  </div></div>;
 }
 
 export default function App() {
-  const [loggedIn,setLoggedIn]=useState(false);
-  return loggedIn ? <AppShell logout={()=>setLoggedIn(false)}/> : <Login onLogin={()=>setLoggedIn(true)}/>;
+  const [loggedIn, setLoggedIn] = useState(() => {
+    return !!localStorage.getItem("@HelpDesk:token");
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem("@HelpDesk:token");
+    setLoggedIn(false);
+  };
+
+  return loggedIn ? <AppShell logout={handleLogout}/> : <Login onLogin={() => setLoggedIn(true)}/>;
 }
